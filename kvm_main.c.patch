@@ -8,7 +8,7 @@
  
  MODULE_AUTHOR("Qumranet");
  MODULE_LICENSE("GPL");
-@@ -470,6 +471,9 @@
+@@ -470,6 +471,9 @@ static struct kvm *kvm_create_vm(unsigne
  	if (!kvm->memslots)
  		goto out_err_no_srcu;
  
@@ -18,7 +18,7 @@
  	/*
  	 * Init kvm generation close to the maximum to easily test the
  	 * code of handling generation number wrap-around.
-@@ -610,6 +614,7 @@
+@@ -610,6 +614,7 @@ static void kvm_destroy_vm(struct kvm *k
  	kvm_arch_destroy_vm(kvm);
  	kvm_destroy_devices(kvm);
  	kvm_free_physmem(kvm);
@@ -26,7 +26,7 @@
  	cleanup_srcu_struct(&kvm->irq_srcu);
  	cleanup_srcu_struct(&kvm->srcu);
  	kvm_arch_free_vm(kvm);
-@@ -3242,6 +3247,7 @@
+@@ -3242,6 +3247,7 @@ static int kvm_init_debug(void)
  			goto out_dir;
  	}
  
@@ -34,7 +34,7 @@
  	return 0;
  
  out_dir:
-@@ -3254,6 +3260,7 @@
+@@ -3254,6 +3260,7 @@ static void kvm_exit_debug(void)
  {
  	struct kvm_stats_debugfs_item *p;
  

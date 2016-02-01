@@ -1,6 +1,6 @@
 --- kernel-untouched/linux-3.19.0/arch/x86/kvm/mmu.h	2016-01-14 15:17:52.000000000 -0800
 +++ kernel-tlbsplit/linux-3.19.0/arch/x86/kvm/mmu.h	2015-12-29 18:15:53.372529893 -0800
-@@ -183,4 +183,8 @@
+@@ -183,4 +183,8 @@ static inline bool permission_fault(stru
  }
  
  void kvm_mmu_invalidate_zap_all_pages(struct kvm *kvm);

@@ -9,7 +9,7 @@
  #include "trace.h"
  
  #define __ex(x) __kvm_handle_fault_on_reboot(x)
-@@ -5355,6 +5357,11 @@
+@@ -5355,6 +5357,11 @@ static int handle_halt(struct kvm_vcpu *
  
  static int handle_vmcall(struct kvm_vcpu *vcpu)
  {
@@ -21,7 +21,7 @@
  	skip_emulated_instruction(vcpu);
  	kvm_emulate_hypercall(vcpu);
  	return 1;
-@@ -5532,6 +5539,7 @@
+@@ -5532,6 +5539,7 @@ static int handle_ept_violation(struct k
  	gpa_t gpa;
  	u32 error_code;
  	int gla_validity;
@@ -29,7 +29,7 @@
  
  	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
  
-@@ -5571,7 +5579,10 @@
+@@ -5571,7 +5579,10 @@ static int handle_ept_violation(struct k
  
  	vcpu->arch.exit_qualification = exit_qualification;
  

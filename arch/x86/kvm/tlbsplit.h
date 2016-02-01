@@ -18,6 +18,7 @@ struct kvm_splitpage {
 		gva_t gva;
 		unsigned long cr3;
 		void * dataaddr;
+		hpa_t codeaddr;
 		bool active;
 };
 
@@ -42,6 +43,7 @@ int split_tlb_handle_ept_violation(struct kvm_vcpu *vcpu,gpa_t gpa,unsigned long
 int split_tlb_has_split_page(struct kvm *kvms, u64* sptep);
 int split_tlb_restore_spte(struct kvm_vcpu *vcpu,gfn_t gfn);
 int split_tlb_restore_spte_base(struct kvm *kvms,gfn_t gfn,u64* sptep);
+int split_tlb_flip_to_code(struct kvm *kvms,hpa_t hpa,u64* sptep);
 
 #define COULD_BE_SPLIT_PAGE(spte) ( (spte&VMX_EPT_WRITABLE_MASK)==0 && (spte&(VMX_EPT_READABLE_MASK|VMX_EPT_EXECUTABLE_MASK))!=0 \
 && ( spte&(VMX_EPT_READABLE_MASK|VMX_EPT_EXECUTABLE_MASK))!=(VMX_EPT_READABLE_MASK|VMX_EPT_EXECUTABLE_MASK) )
