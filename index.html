@@ -34,11 +34,11 @@
 <h2>
 <a id="kernel-patches-and-tlb-split-implementation-for-kvm" class="anchor" href="#kernel-patches-and-tlb-split-implementation-for-kvm" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Kernel patches and TLB split implementation for KVM</h2>
 
-<p>Kernel patches can be found in the root folder, they add calls to the functions, defined in tlbsplit.c, to several KVM files
-To build a kernel with TLB split support
-1. Copy 2 files from arch/x86/kvm to the same folder in the kernel source tree
-2. Apply all patches that can be found in the root folder of the repository (kvm_host.h.patch kvm_main.c.patch  Makefile.patch mmu.c.patch mmu.h.patch vmx.c.patch). These patches were made against Ubuntu kernel 3.19.0 and might require some adjustments for other versions.
-3. Build the kernel using its build script</p>
+<p>Kernel patches can be found in the root folder, they add calls to the functions, defined in tlbsplit.c, to several KVM files<br>
+To build a kernel with TLB split support<br>
+1. Copy 2 files from arch/x86/kvm to the same folder in the kernel source tree<br>
+2. Apply all patches that can be found in the root folder of the repository (kvm_host.h.patch kvm_main.c.patch  Makefile.patch mmu.c.patch mmu.h.patch vmx.c.patch). These patches were made against Ubuntu kernel 3.19.0 and might require some adjustments for other versions.<br>
+3. Build the kernel using its build script   </p>
 
 <h2>
 <a id="test-application" class="anchor" href="#test-application" aria-hidden="true"><span aria-hidden="true" class="octicon octicon-link"></span></a>Test application</h2>
