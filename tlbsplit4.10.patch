@@ -1,0 +1,251 @@
+diff --git a/arch/x86/kvm/Makefile b/arch/x86/kvm/Makefile
+index 3bff207..752e419 100644
+--- a/arch/x86/kvm/Makefile
++++ b/arch/x86/kvm/Makefile
+@@ -14,6 +14,7 @@ kvm-$(CONFIG_KVM_ASYNC_PF)	+= $(KVM)/async_pf.o
+ kvm-y			+= x86.o mmu.o emulate.o i8259.o irq.o lapic.o \
+ 			   i8254.o ioapic.o irq_comm.o cpuid.o pmu.o mtrr.o \
+ 			   hyperv.o page_track.o debugfs.o
++kvm-y			+= tlbsplit.o
+ 
+ kvm-$(CONFIG_KVM_DEVICE_ASSIGNMENT)	+= assigned-dev.o iommu.o
+ 
+diff --git a/arch/x86/kvm/mmu.c b/arch/x86/kvm/mmu.c
+index 7012de4..2d31a1c 100644
+--- a/arch/x86/kvm/mmu.c
++++ b/arch/x86/kvm/mmu.c
+@@ -43,6 +43,7 @@
+ #include <asm/io.h>
+ #include <asm/vmx.h>
+ #include <asm/kvm_page_track.h>
++#include "tlbsplit.h"
+ 
+ /*
+  * When setting this variable to true it enables Two-Dimensional-Paging
+@@ -307,7 +308,7 @@ static int is_nx(struct kvm_vcpu *vcpu)
+ 
+ static int is_shadow_present_pte(u64 pte)
+ {
+-	return (pte & 0xFFFFFFFFull) && !is_mmio_spte(pte);
++	return ((pte & 0xFFFFFFFFull) && !is_mmio_spte(pte)) || COULD_BE_SPLIT_PAGE(pte); //splittlb
+ }
+ 
+ static int is_large_pte(u64 pte)
+@@ -1170,6 +1171,11 @@ static u64 *rmap_get_next(struct rmap_iterator *iter)
+ 
+ static void drop_spte(struct kvm *kvm, u64 *sptep)
+ {
++	if (COULD_BE_SPLIT_PAGE(*sptep)) {
++	   //tlbs debug
++		printk(KERN_WARNING "drop_spte: got something that looks like split page in setter spte:0x%llx checkerfunc:%d\n",*sptep,split_tlb_has_split_page(kvm,sptep));
++		WARN_ON(1);
++	}
+ 	if (mmu_spte_clear_track_bits(sptep))
+ 		rmap_remove(kvm, sptep);
+ }
+@@ -1387,6 +1393,9 @@ static bool kvm_zap_rmapp(struct kvm *kvm, struct kvm_rmap_head *rmap_head)
+ 	bool flush = false;
+ 
+ 	while ((sptep = rmap_get_first(rmap_head, &iter))) {
++		if (COULD_BE_SPLIT_PAGE(*sptep) && split_tlb_has_split_page(kvm,sptep)) { 		//tlbsplit
++			printk(KERN_WARNING "kvm_zap_rmapp: flipped page to exec 0x%llx\n",*sptep); 	//tlbsplit
++		}											//tlbsplit
+ 		rmap_printk("%s: spte %p %llx.\n", __func__, sptep, *sptep);
+ 
+ 		drop_spte(kvm, sptep);
+@@ -2283,6 +2292,11 @@ static bool mmu_page_zap_pte(struct kvm *kvm, struct kvm_mmu_page *sp,
+ 
+ 	pte = *spte;
+ 	if (is_shadow_present_pte(pte)) {
++		if (COULD_BE_SPLIT_PAGE(pte)&&split_tlb_has_split_page(kvm,spte)) {
++			printk(KERN_WARNING "mmu_page_zap_pte: zapping split page in read mode, flipped it to code 0x%llx\n", pte);
++			//split_tlb_flip_to_code(kvm,sp->gfn,spte);
++			pte = *spte;
++		}
+ 		if (is_last_spte(pte, sp->role.level)) {
+ 			drop_spte(kvm, spte);
+ 			if (is_large_pte(pte))
+@@ -2512,6 +2526,14 @@ static int set_spte(struct kvm_vcpu *vcpu, u64 *sptep,
+ 	u64 spte = 0;
+ 	int ret = 0;
+ 
++	struct kvm_splitpage* page = split_tlb_findpage(vcpu->kvm, gfn<<PAGE_SHIFT);
++
++	if (COULD_BE_SPLIT_PAGE(*sptep)) {
++	   //tlbs debug
++		printk(KERN_WARNING "set_spte: got something that looks like active split page in setter spte:0x%llx\n",*sptep);
++		WARN_ON(1);
++	}
++
+ 	if (set_mmio_spte(vcpu, sptep, gfn, pfn, pte_access))
+ 		return 0;
+ 
+@@ -2584,6 +2606,10 @@ static int set_spte(struct kvm_vcpu *vcpu, u64 *sptep,
+ 	}
+ 
+ set_pte:
++	if (page&&page->active) {
++		printk(KERN_WARNING "set_spte: adjusting spte to execute only :0x%llx\n",spte);
++		spte&=~(VMX_EPT_WRITABLE_MASK|VMX_EPT_READABLE_MASK);
++	}
+ 	if (mmu_spte_update(sptep, spte))
+ 		kvm_flush_remote_tlbs(vcpu->kvm);
+ done:
+@@ -2601,6 +2627,12 @@ static bool mmu_set_spte(struct kvm_vcpu *vcpu, u64 *sptep, unsigned pte_access,
+ 	pgprintk("%s: spte %llx write_fault %d gfn %llx\n", __func__,
+ 		 *sptep, write_fault, gfn);
+ 
++	if (COULD_BE_SPLIT_PAGE(*sptep)) {
++	   //tlbs debug
++		printk(KERN_WARNING "mmu_set_spte: got something that looks like split page in setter spte:0x%llx\n",*sptep);
++		WARN_ON(1);
++	}
++
+ 	if (is_shadow_present_pte(*sptep)) {
+ 		/*
+ 		 * If we overwrite a PTE page pointer with a 2MB PMD, unlink
+@@ -2735,6 +2767,30 @@ static void direct_pte_prefetch(struct kvm_vcpu *vcpu, u64 *sptep)
+ 	__direct_pte_prefetch(vcpu, sp, sptep);
+ }
+ 
++u64* split_tlb_findspte(struct kvm_vcpu *vcpu,gfn_t gfn) {
++
++	struct kvm_shadow_walk_iterator iterator;
++	
++	for_each_shadow_entry(vcpu, gfn << PAGE_SHIFT, iterator) {
++		int last = is_last_spte(*iterator.sptep, iterator.level);
++		int large = is_large_pte(*iterator.sptep);
++		if (last && !large) {
++			return iterator.sptep;
++		}
++		if (last && large) {
++			struct kvm_memory_slot *slot;	
++			printk(KERN_WARNING "Large page found for 0x%llx spte:0x%llx level:%d\n",gfn << PAGE_SHIFT,*iterator.sptep,iterator.level);
++			//return NULL;
++			slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
++			kvm_mmu_gfn_disallow_lpage(slot, gfn);
++                        //drop_large_spte(vcpu,iterator.sptep);
++			last = is_last_spte(*iterator.sptep, iterator.level);
++			printk(KERN_WARNING "For page for 0x%llx spte:0x%llx level:%d last:%d\n",gfn << PAGE_SHIFT,*iterator.sptep,iterator.level,last);
++		}
++	}
++	return NULL;
++}
++
+ static int __direct_map(struct kvm_vcpu *vcpu, int write, int map_writable,
+ 			int level, gfn_t gfn, kvm_pfn_t pfn, bool prefault)
+ {
+diff --git a/arch/x86/kvm/mmu.h b/arch/x86/kvm/mmu.h
+index ddc56e9..e64858a 100644
+--- a/arch/x86/kvm/mmu.h
++++ b/arch/x86/kvm/mmu.h
+@@ -195,6 +195,7 @@ static inline u8 permission_fault(struct kvm_vcpu *vcpu, struct kvm_mmu *mmu,
+ }
+ 
+ void kvm_mmu_invalidate_zap_all_pages(struct kvm *kvm);
++u64* split_tlb_findspte(struct kvm_vcpu *vcpu,gfn_t gfn); //splittlb
+ void kvm_zap_gfn_range(struct kvm *kvm, gfn_t gfn_start, gfn_t gfn_end);
+ 
+ void kvm_mmu_gfn_disallow_lpage(struct kvm_memory_slot *slot, gfn_t gfn);
+diff --git a/arch/x86/kvm/vmx.c b/arch/x86/kvm/vmx.c
+index a236dec..7800700 100644
+--- a/arch/x86/kvm/vmx.c
++++ b/arch/x86/kvm/vmx.c
+@@ -49,6 +49,8 @@
+ #include <asm/apic.h>
+ #include <asm/irq_remapping.h>
+ 
++#include "tlbsplit.h"
++
+ #include "trace.h"
+ #include "pmu.h"
+ 
+@@ -6178,6 +6180,10 @@ static int handle_halt(struct kvm_vcpu *vcpu)
+ 
+ static int handle_vmcall(struct kvm_vcpu *vcpu)
+ {
++	if (split_tlb_vmcall_dispatch(vcpu)) {
++		kvm_skip_emulated_instruction(vcpu);
++		return 1;
++	}
+ 	return kvm_emulate_hypercall(vcpu);
+ }
+ 
+@@ -6344,6 +6350,7 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
+ 	gpa_t gpa;
+ 	u32 error_code;
+ 	int gla_validity;
++	int splitresult;
+ 
+ 	exit_qualification = vmcs_readl(EXIT_QUALIFICATION);
+ 
+@@ -6385,7 +6392,10 @@ static int handle_ept_violation(struct kvm_vcpu *vcpu)
+ 
+ 	vcpu->arch.exit_qualification = exit_qualification;
+ 
+-	return kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
++	if (split_tlb_handle_ept_violation(vcpu,gpa,exit_qualification,&splitresult))
++		return splitresult;
++	else
++		return kvm_mmu_page_fault(vcpu, gpa, error_code, NULL, 0);
+ }
+ 
+ static int handle_ept_misconfig(struct kvm_vcpu *vcpu)
+diff --git a/include/linux/kvm_host.h b/include/linux/kvm_host.h
+index 1c5190d..6665afb 100644
+--- a/include/linux/kvm_host.h
++++ b/include/linux/kvm_host.h
+@@ -376,6 +376,7 @@ struct kvm {
+ 	struct mutex slots_lock;
+ 	struct mm_struct *mm; /* userspace tied to this vm */
+ 	struct kvm_memslots *memslots[KVM_ADDRESS_SPACE_NUM];
++	struct kvm_splitpages *splitpages; //splittlb
+ 	struct srcu_struct srcu;
+ 	struct srcu_struct irq_srcu;
+ 	struct kvm_vcpu *vcpus[KVM_MAX_VCPUS];
+diff --git a/virt/kvm/kvm_main.c b/virt/kvm/kvm_main.c
+index 482612b..6b9cd77 100644
+--- a/virt/kvm/kvm_main.c
++++ b/virt/kvm/kvm_main.c
+@@ -62,6 +62,7 @@
+ 
+ #define CREATE_TRACE_POINTS
+ #include <trace/events/kvm.h>
++#include "tlbsplit.h"
+ 
+ /* Worst case buffer size needed for holding an integer. */
+ #define ITOA_MAX_LEN 12
+@@ -646,6 +647,9 @@ static struct kvm *kvm_create_vm(unsigned long type)
+ 			goto out_err_no_srcu;
+ 	}
+ 
++	if (!tlb_split_init(kvm))
++		goto out_err_no_srcu;
++
+ 	if (init_srcu_struct(&kvm->srcu))
+ 		goto out_err_no_srcu;
+ 	if (init_srcu_struct(&kvm->irq_srcu))
+@@ -735,6 +739,7 @@ static void kvm_destroy_vm(struct kvm *kvm)
+ 	kvm_destroy_devices(kvm);
+ 	for (i = 0; i < KVM_ADDRESS_SPACE_NUM; i++)
+ 		kvm_free_memslots(kvm, kvm->memslots[i]);
++        kvm_split_tlb_deactivateall(kvm); //splittbl
+ 	cleanup_srcu_struct(&kvm->irq_srcu);
+ 	cleanup_srcu_struct(&kvm->srcu);
+ 	kvm_arch_free_vm(kvm);
+@@ -3850,6 +3855,7 @@ static int kvm_init_debug(void)
+ 			goto out_dir;
+ 	}
+ 
++	split_init_debugfs();
+ 	return 0;
+ 
+ out_dir:
+@@ -4016,6 +4022,7 @@ EXPORT_SYMBOL_GPL(kvm_init);
+ 
+ void kvm_exit(void)
+ {
++	split_shutdown_debugfs(); //splittlb
+ 	debugfs_remove_recursive(kvm_debugfs_dir);
+ 	misc_deregister(&kvm_dev);
+ 	kmem_cache_destroy(kvm_vcpu_cache);
