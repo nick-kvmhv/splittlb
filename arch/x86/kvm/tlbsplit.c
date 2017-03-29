@@ -343,20 +343,9 @@ int split_tlb_flip_to_code(struct kvm *kvms,hpa_t hpa,u64* sptep) {
 }
 
 
-int split_tlb_freepage(struct kvm_vcpu *vcpu, gva_t gva) {
-	gpa_t gpa;
-	u32 access;
-	struct kvm_splitpage* page;
-	struct x86_exception exception;
+int split_tlb_freepage_by_gpa(struct kvm_vcpu *vcpu, gpa_t gpa) {
 	gfn_t gfn;
-
-	access = (kvm_x86_ops->get_cpl(vcpu) == 3) ? PFERR_USER_MASK : 0;
-	gpa = vcpu->arch.walk_mmu->gva_to_gpa(vcpu, gva, access, &exception);
-	if (gpa == UNMAPPED_GVA) {
-		printk(KERN_WARNING "split:tlb_freepage gva:0x%lx gpa not found %d\n",gva,exception.error_code);
-		return 0;
-	}
-
+	struct kvm_splitpage* page;
 	gfn = gpa >> PAGE_SHIFT;
 	page = split_tlb_findpage(vcpu->kvm,gpa);
 	if (page!=NULL) {
@@ -373,7 +362,20 @@ int split_tlb_freepage(struct kvm_vcpu *vcpu, gva_t gva) {
 		printk(KERN_WARNING "split:tlb_freepage page not found gpa:0x%llx\n",gpa);
 	return 0;
 }
-//EXPORT_SYMBOL_GPL(split_tlb_freepage);
+
+int split_tlb_freepage(struct kvm_vcpu *vcpu, gva_t gva) {
+	gpa_t gpa;
+	u32 access;
+	struct x86_exception exception;
+
+	access = (kvm_x86_ops->get_cpl(vcpu) == 3) ? PFERR_USER_MASK : 0;
+	gpa = vcpu->arch.walk_mmu->gva_to_gpa(vcpu, gva, access, &exception);
+	if (gpa == UNMAPPED_GVA) {
+		printk(KERN_WARNING "split:tlb_freepage gva:0x%lx gpa not found %d\n",gva,exception.error_code);
+		return 0;
+	}
+	return split_tlb_freepage_by_gpa(vcpu,gpa);
+}
 
 int split_tlb_flip_page(struct kvm_vcpu *vcpu, gpa_t gpa, struct kvm_splitpage* splitpage, unsigned long exit_qualification)
 {
