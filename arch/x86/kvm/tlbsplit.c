@@ -346,20 +346,20 @@ int split_tlb_flip_to_code(struct kvm *kvms,hpa_t hpa,u64* sptep) {
 int split_tlb_freepage_by_gpa(struct kvm_vcpu *vcpu, gpa_t gpa) {
 	gfn_t gfn;
 	struct kvm_splitpage* page;
-	gfn = gpa >> PAGE_SHIFT;
 	page = split_tlb_findpage(vcpu->kvm,gpa);
 	if (page!=NULL) {
 		if (page->active) {
 			int rc = kvm_write_guest(vcpu->kvm,gpa&PAGE_MASK,page->dataaddr,4096);
+			gfn = gpa >> PAGE_SHIFT;
 			split_tlb_restore_spte(vcpu,gfn);
-			printk(KERN_WARNING "split:tlb_freepage copying data cr3:0x%lx gva:0x%lx gpa:0x%llx cpyrc:%d\n",page->cr3,page->gva,page->gpa,rc);
+			printk(KERN_WARNING "split_tlb_freepage_by_gpa: copying data cr3:0x%lx gva:0x%lx gpa:0x%llx cpyrc:%d\n",page->cr3,page->gva,page->gpa,rc);
 		} else {
-			printk(KERN_WARNING "split:tlb_freepage inactive page cr3:0x%lx gva:0x%lx gpa:0x%llx\n",page->cr3,page->gva,page->gpa);
+			printk(KERN_WARNING "split_tlb_freepage_by_gpa: inactive page cr3:0x%lx gva:0x%lx gpa:0x%llx\n",page->cr3,page->gva,page->gpa);
 		}
 		kvm_split_tlb_freepage(page);
 		return 1;
 	} else
-		printk(KERN_WARNING "split:tlb_freepage page not found gpa:0x%llx\n",gpa);
+		printk(KERN_WARNING "split_tlb_freepage_by_gpa: page not found gpa:0x%llx\n",gpa);
 	return 0;
 }
 
@@ -395,6 +395,7 @@ int split_tlb_flip_page(struct kvm_vcpu *vcpu, gpa_t gpa, struct kvm_splitpage* 
 		if (split_tlb_restore_spte(vcpu,gfn)==0)
 			return 0;
 		rc = kvm_write_guest(vcpu->kvm,gpa&PAGE_MASK,splitpage->dataaddr,4096);
+		kvm_split_tlb_freepage(splitpage);
 		printk(KERN_WARNING "split_tlb_flip_page: WRITE EPT fault at 0x%llx data copied rc:%d\n",gpa,rc);
 	} else if (exit_qualification & PTE_READ) //read
 	{
@@ -468,17 +469,18 @@ int deactivateAllPages(struct kvm_vcpu *vcpu) {
 	int i;
 	for (i = 0; i < KVM_MAX_SPLIT_PAGES; i++) {
 		gva_t gva = spages->pages[i].gva;
+		gpa_t gpa = spages->pages[i].gpa;
 		if (gva) {
-			if (split_tlb_freepage(vcpu,spages->pages[i].gva)==0) {
-				printk(KERN_WARNING "deactivateAllPages: split_tlb_freepage failed for gva=%lx attempting to fix and free it based on saved gpa\n",gva);
-				split_tlb_restore_spte(vcpu,spages->pages[i].gpa >> PAGE_SHIFT);
+			if (split_tlb_freepage_by_gpa(vcpu,gpa)==0) {
+				printk(KERN_WARNING "deactivateAllPages: split_tlb_freepage failed for gva=%lx/gpa=%llx attempting to fix and free it based on saved gpa\n",gva,gpa);
+				split_tlb_restore_spte(vcpu,gpa >> PAGE_SHIFT);
+
 				kvm_split_tlb_freepage(spages->pages+i);
 			}
 		}
 	}
 	return 1;
 }
-
 
 int isPageSplit(struct kvm_vcpu *vcpu, gva_t addr ) {
 	u32 access = (kvm_x86_ops->get_cpl(vcpu) == 3) ? PFERR_USER_MASK : 0;
@@ -487,6 +489,7 @@ int isPageSplit(struct kvm_vcpu *vcpu, gva_t addr ) {
 	gpa_t addr_gpa = vcpu->arch.walk_mmu->gva_to_gpa(vcpu, addr, access, &exception);
 	if (addr_gpa == UNMAPPED_GVA)
 		return 0;
+	printk(KERN_WARNING "isPageSplit: address translated gva=%lx to gpa=0x%llx\n",addr,addr_gpa);
 	page = split_tlb_findpage(vcpu->kvm,addr_gpa);
 	if (page != NULL)
 		return 1;
