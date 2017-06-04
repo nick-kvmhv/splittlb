@@ -36,6 +36,9 @@
     <ClInclude Include="utils.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="genericHook.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -56,9 +59,21 @@
     <ClCompile Include="utils.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="genericHook.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <MASM Include="vmcalls.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="testutils.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="gericHookAsm.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="genericHookTools.asm">
       <Filter>Source Files</Filter>
     </MASM>
   </ItemGroup>

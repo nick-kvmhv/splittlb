@@ -3,6 +3,9 @@ PUBLIC setDataPagehv
 PUBLIC activatePagehv
 PUBLIC deactivatePagehv
 PUBLIC deactivateAllPageshv
+PUBLIC isPageSplithv
+PUBLIC writeCodePagehv
+
 .CODE
 ALIGN     8
 checkhv PROC FRAME
@@ -41,6 +44,22 @@ ret
 ALIGN     8
 activatePagehv ENDP
 
+writeCodePagehv PROC FRAME
+;void* pageAddr
+push rbx
+.ENDPROLOG
+;mov rcx,rcx
+;mov rdx,rdx
+;mov r8,r8
+mov ax,0003h
+vmcall
+pop rbx
+ret
+ALIGN     8
+writeCodePagehv ENDP
+
+
+
 deactivatePagehv PROC FRAME
 ;void* pageAddr
 push rbx
@@ -62,6 +81,17 @@ pop rbx
 ret
 ALIGN     8
 deactivateAllPageshv ENDP
+ALIGN     8
+
+isPageSplithv PROC FRAME
+.ENDPROLOG
+push rbx
+mov ax,0007h
+vmcall
+pop rbx
+ret
+ALIGN     8
+isPageSplithv ENDP
 ALIGN     8
 
 _TEXT ENDS

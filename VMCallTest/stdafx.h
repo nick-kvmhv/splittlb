@@ -14,6 +14,7 @@
 #include <conio.h>
 #include <set>
 #include <map>
+#include <list>
 #include <MinHook.h>
 #include "PatchManager.h"
 #include "utils.h"

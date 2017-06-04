@@ -1,4 +1,5 @@
 #include "stdafx.h"
+#include "tlbsplit.h"
 // Helper function for MH_CreateHookApi().
  
 #define LOGGER_NAME "DebugHelper"
@@ -47,8 +48,24 @@ BOOL WINAPI my_GetThreadContext(
 	return result;
 };
 
+void makeWritable(void* addr) {
 
-int setupDebugHooks(PatchManager& pm) 
+	DWORD dwOldProtect;
+	if (!VirtualProtect(addr,
+		4096,    // Length, in bytes, of the set of pages 
+				 //to change
+		PAGE_EXECUTE_READWRITE, // What to change it to
+		&dwOldProtect  // Place to store the old setting
+	))
+		printf("Virtual protect failed");
+
+	size_t val = *(size_t*)addr;  //make a page copy in the process address space
+	val++; val--;
+	*(size_t*)addr = val;
+
+}
+
+int setupDebugHooks() 
 {
 
  // Initialize MinHook.
@@ -59,12 +76,18 @@ int setupDebugHooks(PatchManager& pm)
         return 1;
     }
 
-	pm.addPatch(&IsDebuggerPresent,10);
+	//pm.addPatch(&IsDebuggerPresent,10);
     if (MH_CreateHookApiEx(L"kernel32", "IsDebuggerPresent", &my_IsDebuggerPresent, &ORIG_IsDebuggerPresent) != MH_OK)
     {
 		pantheios::log(pantheios::error, "MH_CreateHookApiEx IsDebuggerPresent failed");
         return 1;
     }
+
+	printf("isProtected b4 %d\n", tlbsplit::isPageSplit(&IsDebuggerPresent));
+	makeWritable(&IsDebuggerPresent);  //make a page copy in the process address space
+	//*((BYTE*)&IsDebuggerPresent + 2) = 0x31;
+	//*((BYTE*)&IsDebuggerPresent + 3) = 0xc0;
+	printf("isProtected after %d\n", tlbsplit::isPageSplit(&IsDebuggerPresent));
 
     if (MH_EnableHook(&IsDebuggerPresent) != MH_OK)
     {
@@ -72,14 +95,16 @@ int setupDebugHooks(PatchManager& pm)
         return 1;
     }
 
-	pm.addPatch(&GetThreadContext,10);
+	//pm.addPatch(&GetThreadContext,10);
 	if (MH_CreateHookApiEx(L"kernel32", "GetThreadContext", &my_GetThreadContext, &ORIG_GetThreadContext) != MH_OK)
     {
 		pantheios::log(pantheios::error, "MH_EnableHook GetThreadContext failed");
         return 1;
     }
 
-    if (MH_EnableHook(&GetThreadContext) != MH_OK)
+	makeWritable(&GetThreadContext);
+
+	if (MH_EnableHook(&GetThreadContext) != MH_OK)
     {
 		pantheios::log(pantheios::error, "MH_EnableHook GetThreadContext failed");
         return 1;

@@ -3,21 +3,40 @@
 
 #include "stdafx.h"
 #include "TLBSplit.h"
+#include "genericHook.h"
 
 #if defined _M_X64
 #ifdef _DEBUG
-#pragma comment(lib, "libMinHook-x64-v110-mtd.lib")
+#pragma comment(lib, "libMinHook.x64.lib")
 #else
-#pragma comment(lib, "libMinHook-x64-v120-mt.lib")
+#pragma comment(lib, "libMinHook.x64.lib")
 #endif
 #elif defined _M_IX86
 #pragma comment(lib, "libMinHook.x86.lib") //Copy paste, should never happen
 #endif
 
-enum enum_commands {once,many,codendata,hook,write};
+extern "C" size_t getrip();
+extern "C" size_t invalidopcode();
+
+enum enum_commands {once,many,codendata,hook,write,uhook, deactivate};
 
 void __stdcall printit(int jmpCounter, void* address) {
 		printf("Iteration: %d value: %x\n",jmpCounter,*(DWORD*)address);
+}
+
+size_t __stdcall foruhook() {
+	printf("foruhook: starting\n");
+	size_t result = getrip();
+	printf("foruhook: getrip returned %llx\n",result);
+	return result;
+}
+
+void genericHookHandler(genericHook::REGSTRUCT& registers) {
+	genericHook::XMMREGSTRUCT xmms;
+	genericHook::captureXMMregs(&xmms);
+	printf("genericHookHandler rax:%llx rbx:%llx rcx:%llx rdx:%llx rsi:%llx rdi:%llx flags:%llx", registers.rax, registers.rbx, registers.rcx, registers.rdx, registers.rsi, registers.rdi, registers.flags);
+	registers.rax = 0xDEADBEEF;
+	genericHook::restoreXMMregs(&xmms);
 }
 
 int _tmain(int argc, _TCHAR* argv[])
@@ -36,6 +55,10 @@ int _tmain(int argc, _TCHAR* argv[])
 		  command = hook;
 	  else if (wcscmp(argv[1],L"/write")==0)
 		  command = write;
+	  else if (wcscmp(argv[1], L"/uhook") == 0)
+		  command = uhook;
+	  else if (wcscmp(argv[1], L"/deactivate") == 0)
+		  command = deactivate;
 	  else {
 		  printf("Invalid command: %S\n", argv[1]);
 		  return 1;
@@ -55,11 +78,12 @@ int _tmain(int argc, _TCHAR* argv[])
 	Searching here for the immediate value that should be present somewhere in the code. Taking 2nd occurence because the first occurence is this loop. 
 	Optimization has to be disabled for this to work or C++ gets smart and stores it in a register.
   */
+  size_t hererip = getrip();
   for (int i = 0; i < 4096; i++) {
-	  if ( *(size_t*)(((size_t)&_tmain)+i) == 0x1234567890ui64) {
+	  if ( *(size_t*)(hererip+i) == 0x1234567890ui64) {
 		  counter++;
 		  if (counter==2) {
-			  coderef = ((size_t)&_tmain)+i;
+			  coderef = hererip+i;
 			  printf("Found it at %llx\n",coderef);
 			  break;
 		  }
@@ -69,7 +93,7 @@ int _tmain(int argc, _TCHAR* argv[])
 	  printf("Not Found the pattern\n");
 	  return 1;
   }
-  
+
 	if (!VirtualProtect ((void*)coderef,    
 						 4096,    // Length, in bytes, of the set of pages 
 									//to change
@@ -89,17 +113,25 @@ int _tmain(int argc, _TCHAR* argv[])
 			  readval = *(size_t*)(codevalue);
 			  *(size_t*)(codevalue) = readval;
 
-			  printf("Value before VMCALL: %llx hypervisor support: %d\n",readval,rc);
+			  bool splitAlready = tlbsplit::isPageSplit((void*)coderef);
+
+			  printf("Value before VMCALL: %llx hypervisor support: %d splitAlready: %d\n",readval,rc, splitAlready);
 			  rc = tlbsplit::setDataPage((void*)coderef,(void*)coderef);
 			  if (!rc)
-				  printf("tlbsplit::setDataPage failed\n",readval,rc);
+				  printf("tlbsplit::setDataPage failed %d\n",rc);
 			  else {
-				  *((size_t*)codevalue) = 0x67890;
-				  printf("tlbsplit::activatePage after patching %llx\n",*((DWORD*)codevalue));
+				  //*((size_t*)codevalue) = 0x67890;
+				  printf("tlbsplit::activatePage without patching %llx\n",*((size_t*)codevalue));
 				  rc = tlbsplit::activatePage((void*)coderef);
 				  if (!rc)
 					  printf("tlbsplit::activatePage failed\n");
 				  else {
+					    size_t otherval = 0x44332211;
+						splitAlready = tlbsplit::isPageSplit((void*)coderef);
+						printf("tlbsplit::writeCodePage(%llx,%llx,%d) splitAlready:%d\n", (size_t)&otherval, coderef, 8, splitAlready);
+						rc = tlbsplit::writeCodePage(&otherval,(void*)coderef,8);
+						if (!rc)
+							printf("tlbsplit::writeCodePage failed\n");
 						int maxIteration = count;
 						size_t *reads = new size_t[maxIteration];
 						size_t *readsCode = new size_t[maxIteration];
@@ -122,6 +154,8 @@ int _tmain(int argc, _TCHAR* argv[])
 							printf("tlbsplit::deactivatePage failed\n");
 						else
 							printf("tlbsplit::deactivatePage succeeded, value after %llx\n",*(size_t*)(codevalue));
+						splitAlready = tlbsplit::isPageSplit((void*)coderef);
+						printf("tlbsplit::splitAlready %d after deactivation\n", splitAlready);
 					  }
 				  }
 		  } else
@@ -130,31 +164,49 @@ int _tmain(int argc, _TCHAR* argv[])
 /*
 		Hooking IsDebuggerPresent function via minhooks, 
 */
-			PatchManager pm;
+			//PatchManager pm;
 			tlbsplit::deactivateAllPages();
 			printf("At start %llx\n",*(size_t*)&IsDebuggerPresent);
-			setupDebugHooks(pm);
+			setupDebugHooks();
 			printf("After hooks %llx\n",*(size_t*)&IsDebuggerPresent);
-			if (!pm.protectAll())
-				printf("protectAll failed\n");
-			else {
-				printf("After protect %llx\n",*(size_t*)&IsDebuggerPresent);
-				int ch = 0;
-				  do {
- 					  printf("Call to hooked IsDebuggerPresent:%d\n",IsDebuggerPresent());
-					  if (ch=='r') {
-						printf("Reding the function prologue:%llx\n",*(size_t*)&IsDebuggerPresent);
-					  }
-					  if (ch=='w') {
-						printf("Triggering memory write :%llx\n",*(size_t*)&IsDebuggerPresent);
-						  size_t val = *(size_t*)&IsDebuggerPresent;
-						  val++; val--;
-						  *(size_t*)&IsDebuggerPresent = val;
+			int ch = 0;
+				do {
+					size_t val = *(size_t*)&IsDebuggerPresent;
+					printf("Call to hooked IsDebuggerPresent:%d\n",IsDebuggerPresent());
+					if (ch=='r') {
+					printf("Reding the function prologue:%llx\n",*(size_t*)&IsDebuggerPresent);
+					}
+					if (ch=='w') {
+						printf("Triggering memory write :%llx\n", val);
+							val++; val--;
+							*(size_t*)&IsDebuggerPresent = val;
 						printf("Value after write :%llx\n",*(size_t*)&IsDebuggerPresent);
-					  }
-				  } while ((ch=_getch()) != 'q');
-			}
+					}
+				} while ((ch=_getch()) != 'q');
+	  } else if (command == uhook) {
+		  // Initialize MinHook.
+		  if (MH_Initialize() != MH_OK)
+		  {
+			  printf("MH_Initialize failed");
+
+			  return 1;
+		  }
+		  size_t addrtohook = foruhook();
+		  printf("Hooking %llx\n", addrtohook);
+		  if (!genericHook::createGenericHook((void*)addrtohook, &genericHookHandler))
+			  printf("createGenericHook failed");
+		  else {
+			  if (!genericHook::activateGenericHook((void*)addrtohook)) {
+				  printf("activateGenericHook failed");
+			  }
+			  else {
+				  size_t second_value = foruhook();
+				  printf("second call returned %llx",second_value);
+			  }
+		  }
+	  }  else if (command == deactivate) {
 		  tlbsplit::deactivateAllPages();
+		  printf("all pages deactivated");
 	  }
   return 0;
 }

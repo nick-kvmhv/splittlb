@@ -1,2 +1,2 @@
-int setupDebugHooks(PatchManager& pm);
+int setupDebugHooks();
 int releaseDebugHooks();

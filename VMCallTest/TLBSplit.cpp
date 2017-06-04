@@ -3,8 +3,10 @@
 extern "C" int checkhv();
 extern "C" int setDataPagehv(void* pageAddr, void* data);
 extern "C" int activatePagehv(void* pageAddr);
+extern "C" int writeCodePagehv(void* _from, void* _to, size_t bytes);
 extern "C" int deactivatePagehv(void* pageAddr);
 extern "C" int deactivateAllPageshv();
+extern "C" int isPageSplithv(void* pageAddr);
 
 namespace tlbsplit {
 int __forceinline IsInsideVPC_exceptionFilter(LPEXCEPTION_POINTERS ep)
@@ -39,6 +41,11 @@ bool activatePage(void* pageAddr) {
 	return rc!=0;
 };
 
+bool writeCodePage(void* _from,void* _to, size_t bytes) {
+	int rc = writeCodePagehv(_from,_to,bytes);
+	return rc != 0;
+};
+
 bool deactivatePage(void* pageAddr) {
 	int rc = deactivatePagehv(pageAddr);
 	return rc!=0;
@@ -48,5 +55,11 @@ bool deactivateAllPages() {
 	int rc = deactivateAllPageshv();
 	return rc!=0;
 };
+
+bool isPageSplit(void* pageAddr) {
+	int rc = isPageSplithv(pageAddr);
+	return rc != 0;
+};
+
 
 }
