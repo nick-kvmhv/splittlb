@@ -12,6 +12,7 @@
 #include <linux/kvm_host.h>
 
 #define KVM_MAX_SPLIT_PAGES 100
+#define MAX_PATCH_SIZE 1024
 
 struct kvm_splitpage {
 		gpa_t gpa;
@@ -42,7 +43,7 @@ int split_tlb_vmcall_dispatch(struct kvm_vcpu *vcpu);
 int split_tlb_handle_ept_violation(struct kvm_vcpu *vcpu,gpa_t gpa,unsigned long exit_qualification,int* splitresult);
 int split_tlb_has_split_page(struct kvm *kvms, u64* sptep);
 int split_tlb_restore_spte(struct kvm_vcpu *vcpu,gfn_t gfn);
-int split_tlb_restore_spte_base(struct kvm *kvms,gfn_t gfn,u64* sptep);
+//int split_tlb_restore_spte_base(struct kvm *kvms,gfn_t gfn,u64* sptep);
 int split_tlb_flip_to_code(struct kvm *kvms,hpa_t hpa,u64* sptep);
 
 #define COULD_BE_SPLIT_PAGE(spte) ( (spte&VMX_EPT_WRITABLE_MASK)==0 && (spte&(VMX_EPT_READABLE_MASK|VMX_EPT_EXECUTABLE_MASK))!=0 \

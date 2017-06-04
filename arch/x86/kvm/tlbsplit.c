@@ -8,6 +8,7 @@
 #include "tlbsplit.h"
 #include <asm/vmx.h>
 #include <linux/debugfs.h>
+#include <linux/kvm_host.h>
 //#include <linux/gfp.h>
 #include "mmu.h"
 
@@ -205,7 +206,7 @@ int split_tlb_activatepage(struct kvm_vcpu *vcpu, gva_t gva, ulong cr3) {
 		printk(KERN_WARNING "split:tlb_activatepage page not foundcr3:0x%lx gva:0x%lx translated gpa:0x%llx \n",cr3,gva,gpa);
 		return 0;
 	}
-	printk(KERN_WARNING "split:tlb_activatepage found page cr3:0x%lx gva:0x%lx gpa:0x%llx page_gpa:0x%llx\n",cr3,gva,gpa,page->gpa);
+	printk(KERN_WARNING "split_tlb_activatepage found page cr3:0x%lx gva:0x%lx gpa:0x%llx page_gpa:0x%llx\n",cr3,gva,gpa,page->gpa);
 	if (page->gpa != (gpa&PAGE_MASK) ) {
 		printk(KERN_WARNING "split:tlb_activatepage gpa changed 0x%llx->0x%llx, adjusting\n",page->gpa,gpa&PAGE_MASK);
 		page->gpa = gpa&PAGE_MASK;
@@ -216,7 +217,7 @@ int split_tlb_activatepage(struct kvm_vcpu *vcpu, gva_t gva, ulong cr3) {
 	if (sptep!=NULL) {
 		u64 newspte = *sptep & ~(VMX_EPT_READABLE_MASK|VMX_EPT_WRITABLE_MASK);
 		//newspte = 0L;
-		printk(KERN_WARNING "split_tlb_activatepage: spte=0x%llx->newspte=0x%llx\n",*sptep,newspte);
+		printk(KERN_WARNING "split_tlb_activatepage: spte=0x%llx->newspte=0x%llx ,sptep=x%llx\n",*sptep,newspte,(u64)sptep);
         *sptep = newspte;
         page->active = true;
 		kvm_flush_remote_tlbs(vcpu->kvm);
@@ -227,13 +228,45 @@ int split_tlb_activatepage(struct kvm_vcpu *vcpu, gva_t gva, ulong cr3) {
 }
 //EXPORT_SYMBOL_GPL(split_tlb_activatepage);
 
+int split_tlb_copymem(struct kvm_vcpu *vcpu, gva_t from, gva_t to, u64 count) {
+	if (count>MAX_PATCH_SIZE)
+		return 0;
+	else {
+		int r;
+		char buf[count];
+		struct x86_exception exception;
+		u32 access = (kvm_x86_ops->get_cpl(vcpu) == 3) ? PFERR_USER_MASK : 0;
+		gpa_t from_gpa = vcpu->arch.walk_mmu->gva_to_gpa(vcpu, from, access, &exception);
+		gpa_t to_gpa = vcpu->arch.walk_mmu->gva_to_gpa(vcpu, to, access, &exception);
+		if (from_gpa == UNMAPPED_GVA) {
+			printk(KERN_WARNING "split_tlb_copymem: from gva:0x%lx gpa not found  %d\n",from,exception.error_code);
+			return 0;
+		}
+		if (to_gpa == UNMAPPED_GVA) {
+			printk(KERN_WARNING "split_tlb_copymem: to gva:0x%lx gpa not found  %d\n",to,exception.error_code);
+			return 0;
+		}
+		r = kvm_read_guest(vcpu->kvm,from_gpa,buf,count);
+		if (r != 0) {
+			printk(KERN_WARNING "split_tlb_copymem: read gva:0x%lx gpa:0x%llx failed with the result %d\n",from,from_gpa,r);
+			return 0;
+		}
+		r = kvm_write_guest(vcpu->kvm,to_gpa,buf,count);
+		if (r != 0) {
+			printk(KERN_WARNING "split_tlb_copymem: write gva:0x%lx gpa:0x%llx failed with the result %d\n",to,to_gpa,r);
+			return 0;
+		}
+		return 1;
+	}
+}
+
 int split_tlb_restore_spte_atomic(struct kvm *kvms,gfn_t gfn,u64* sptep,hpa_t stepaddr) {
 	if (sptep!=NULL) {
 		u64 newspte = *sptep;
 		if ((newspte&VMX_EPT_READABLE_MASK)==0||(newspte&VMX_EPT_EXECUTABLE_MASK)==0||(newspte&VMX_EPT_WRITABLE_MASK)==0) {
 			newspte|=VMX_EPT_READABLE_MASK|VMX_EPT_WRITABLE_MASK|VMX_EPT_EXECUTABLE_MASK;
 			newspte&=~PT64_BASE_ADDR_MASK;
-			newspte|=(stepaddr<<PAGE_SHIFT)&PT64_BASE_ADDR_MASK;
+			newspte|=stepaddr & PT64_BASE_ADDR_MASK;
 			printk(KERN_WARNING "split_tlb_restore_spte_atomic: fixing spte 0%llx->0%llx for 0%llx\n", *sptep, newspte, gfn<<PAGE_SHIFT);
 			*sptep = newspte;
 		} else
@@ -245,13 +278,28 @@ int split_tlb_restore_spte_atomic(struct kvm *kvms,gfn_t gfn,u64* sptep,hpa_t st
 	}
 }
 
+hpa_t ts_gfn_to_pfa(struct kvm_vcpu *vcpu,gfn_t gfn) {
+struct kvm_memory_slot *slot;
+bool async,writable;
+kvm_pfn_t pfn;
+
+	slot = kvm_vcpu_gfn_to_memslot(vcpu, gfn);
+	async = false;
+	pfn = __gfn_to_pfn_memslot(slot, gfn, false, &async, false, &writable);
+	if (async || !writable) {
+		printk(KERN_WARNING "ts_gfn_to_pfn: unexpected async:%d writable%d\n", async, writable);
+		WARN_ON(1);
+	}
+	return pfn << PAGE_SHIFT;
+	
+}
+
 int split_tlb_restore_spte(struct kvm_vcpu *vcpu,gfn_t gfn) {
-	bool async,writable;
 	int result;
 	u64* sptep;
-	hpa_t stepaddr = gfn_to_pfn_async(vcpu->kvm,gfn,&async,false,&writable);
-	if (async || !writable)
-		printk(KERN_WARNING "split_tlb_restore_spte: unexpected async:%d writable%d gpa:0%llx hfn:0%llx\n", async, writable, gfn<<PAGE_SHIFT,stepaddr);
+	hpa_t stepaddr = ts_gfn_to_pfa(vcpu,gfn) ;
+//	if (async || !writable)
+//		printk(KERN_WARNING "split_tlb_restore_spte: unexpected async:%d writable%d gpa:0%llx hfn:0%llx\n", async, writable, gfn<<PAGE_SHIFT,stepaddr);
 	spin_lock(&vcpu->kvm->mmu_lock);
 	sptep = split_tlb_findspte(vcpu,gfn);
 	if (sptep!=NULL && *sptep==0) {
@@ -264,6 +312,7 @@ int split_tlb_restore_spte(struct kvm_vcpu *vcpu,gfn_t gfn) {
 	return result;
 }
 
+/*
 int split_tlb_restore_spte_base(struct kvm *kvms,gfn_t gfn,u64* sptep) {
 	bool async,writable;
 	hpa_t stepaddr = gfn_to_pfn_async(kvms,gfn,&async,false,&writable);
@@ -271,6 +320,7 @@ int split_tlb_restore_spte_base(struct kvm *kvms,gfn_t gfn,u64* sptep) {
 		printk(KERN_WARNING "split_tlb_restore_spte_base: unexpected async:%d writable%d gpa:0%llx\n", async, writable, gfn<<PAGE_SHIFT);
 	return split_tlb_restore_spte_atomic(kvms,gfn,sptep,stepaddr);
 }
+*/
 
 int split_tlb_flip_to_code(struct kvm *kvms,hpa_t hpa,u64* sptep) {
 	if (sptep!=NULL) {
@@ -293,12 +343,30 @@ int split_tlb_flip_to_code(struct kvm *kvms,hpa_t hpa,u64* sptep) {
 }
 
 
+int split_tlb_freepage_by_gpa(struct kvm_vcpu *vcpu, gpa_t gpa) {
+	gfn_t gfn;
+	struct kvm_splitpage* page;
+	page = split_tlb_findpage(vcpu->kvm,gpa);
+	if (page!=NULL) {
+		if (page->active) {
+			int rc = kvm_write_guest(vcpu->kvm,gpa&PAGE_MASK,page->dataaddr,4096);
+			gfn = gpa >> PAGE_SHIFT;
+			split_tlb_restore_spte(vcpu,gfn);
+			printk(KERN_WARNING "split_tlb_freepage_by_gpa: copying data cr3:0x%lx gva:0x%lx gpa:0x%llx cpyrc:%d\n",page->cr3,page->gva,page->gpa,rc);
+		} else {
+			printk(KERN_WARNING "split_tlb_freepage_by_gpa: inactive page cr3:0x%lx gva:0x%lx gpa:0x%llx\n",page->cr3,page->gva,page->gpa);
+		}
+		kvm_split_tlb_freepage(page);
+		return 1;
+	} else
+		printk(KERN_WARNING "split_tlb_freepage_by_gpa: page not found gpa:0x%llx\n",gpa);
+	return 0;
+}
+
 int split_tlb_freepage(struct kvm_vcpu *vcpu, gva_t gva) {
 	gpa_t gpa;
 	u32 access;
-	struct kvm_splitpage* page;
 	struct x86_exception exception;
-	gfn_t gfn;
 
 	access = (kvm_x86_ops->get_cpl(vcpu) == 3) ? PFERR_USER_MASK : 0;
 	gpa = vcpu->arch.walk_mmu->gva_to_gpa(vcpu, gva, access, &exception);
@@ -306,31 +374,14 @@ int split_tlb_freepage(struct kvm_vcpu *vcpu, gva_t gva) {
 		printk(KERN_WARNING "split:tlb_freepage gva:0x%lx gpa not found %d\n",gva,exception.error_code);
 		return 0;
 	}
-
-	gfn = gpa >> PAGE_SHIFT;
-	page = split_tlb_findpage(vcpu->kvm,gpa);
-	if (page!=NULL) {
-		if (page->active) {
-			int rc = kvm_write_guest(vcpu->kvm,gpa&PAGE_MASK,page->dataaddr,4096);
-			split_tlb_restore_spte(vcpu,gfn);
-			printk(KERN_WARNING "split:tlb_freepage copying data cr3:0x%lx gva:0x%lx gpa:0x%llx cpyrc:%d\n",page->cr3,page->gva,page->gpa,rc);
-		} else {
-			printk(KERN_WARNING "split:tlb_freepage inactive page cr3:0x%lx gva:0x%lx gpa:0x%llx\n",page->cr3,page->gva,page->gpa);
-		}
-		kvm_split_tlb_freepage(page);
-		return 1;
-	} else
-		printk(KERN_WARNING "split:tlb_freepage page not found gpa:0x%llx\n",gpa);
-	return 0;
+	return split_tlb_freepage_by_gpa(vcpu,gpa);
 }
-//EXPORT_SYMBOL_GPL(split_tlb_freepage);
 
 int split_tlb_flip_page(struct kvm_vcpu *vcpu, gpa_t gpa, struct kvm_splitpage* splitpage, unsigned long exit_qualification)
 {
 	gfn_t gfn = gpa >> PAGE_SHIFT;
 	unsigned long rip = kvm_rip_read(vcpu);
 	unsigned long cr3 = kvm_read_cr3(vcpu);
-	bool async,writable;
 	phys_addr_t detouraddr = virt_to_phys(splitpage->dataaddr);
 
 
@@ -344,13 +395,14 @@ int split_tlb_flip_page(struct kvm_vcpu *vcpu, gpa_t gpa, struct kvm_splitpage* 
 		if (split_tlb_restore_spte(vcpu,gfn)==0)
 			return 0;
 		rc = kvm_write_guest(vcpu->kvm,gpa&PAGE_MASK,splitpage->dataaddr,4096);
+		kvm_split_tlb_freepage(splitpage);
 		printk(KERN_WARNING "split_tlb_flip_page: WRITE EPT fault at 0x%llx data copied rc:%d\n",gpa,rc);
 	} else if (exit_qualification & PTE_READ) //read
 	{
 		u64* sptep;
-		hpa_t stepaddr = gfn_to_pfn_async(vcpu->kvm,gfn,&async,false,&writable);
-		if (async || !writable)
-			printk(KERN_WARNING "split_tlb_flip_page: unexpected async:%d writable%d\n", async, writable);
+		hpa_t stepaddr = ts_gfn_to_pfa(vcpu,gfn);
+		//if (async || !writable)
+		//	printk(KERN_WARNING "split_tlb_flip_page: unexpected async:%d writable%d\n", async, writable);
 		spin_lock(&vcpu->kvm->mmu_lock);
 		sptep = split_tlb_findspte(vcpu,gfn);
 		if (exit_qualification & PTE_EXECUTE) //TODO handle execute&read, not sure if needed
@@ -367,7 +419,7 @@ int split_tlb_flip_page(struct kvm_vcpu *vcpu, gpa_t gpa, struct kvm_splitpage* 
 			if ((newspte&(VMX_EPT_WRITABLE_MASK|VMX_EPT_EXECUTABLE_MASK|VMX_EPT_READABLE_MASK))==0) {
 				printk(KERN_INFO "split_tlb_flip_page: sptep last 3 bits are 0 for gpa:0x%llx \n",gpa);
 			}
-			splitpage->codeaddr = stepaddr<<PAGE_SHIFT;
+			splitpage->codeaddr = stepaddr;
 			newspte&=~(VMX_EPT_WRITABLE_MASK|VMX_EPT_EXECUTABLE_MASK);
 			newspte|=VMX_EPT_READABLE_MASK;
 			newspte&=~PT64_BASE_ADDR_MASK;
@@ -381,9 +433,9 @@ int split_tlb_flip_page(struct kvm_vcpu *vcpu, gpa_t gpa, struct kvm_splitpage* 
 	} else if (exit_qualification & PTE_EXECUTE) //execute
 	{
 		u64* sptep;
-		hpa_t stepaddr = gfn_to_pfn_async(vcpu->kvm,gfn,&async,false,&writable);
-		if (async || !writable)
-			printk(KERN_WARNING "split_tlb_flip_page: unexpected async:%d writable%d\n", async, writable);
+		hpa_t stepaddr = ts_gfn_to_pfa(vcpu,gfn);
+//		if (async || !writable)
+//			printk(KERN_WARNING "split_tlb_flip_page: unexpected async:%d writable%d\n", async, writable);
 		spin_lock(&vcpu->kvm->mmu_lock);
 		sptep = split_tlb_findspte(vcpu,gfn);
 		if (sptep!=NULL) {
@@ -399,7 +451,7 @@ int split_tlb_flip_page(struct kvm_vcpu *vcpu, gpa_t gpa, struct kvm_splitpage* 
 			newspte&=~(VMX_EPT_WRITABLE_MASK|VMX_EPT_READABLE_MASK);
 			newspte|=VMX_EPT_EXECUTABLE_MASK;
 			newspte&=~PT64_BASE_ADDR_MASK;
-			newspte|=(stepaddr<<PAGE_SHIFT)&PT64_BASE_ADDR_MASK;
+			newspte|=stepaddr&PT64_BASE_ADDR_MASK;
 			//printk(KERN_WARNING "split_tlb_flip_page: execute EPT fault at 0x%llx/0x%llx -> 0x%llx detourpa:0x%llx rip:0x%lx\n vcpuid:%d\n",gpa,*sptep,newspte,detouraddr,rip,vcpu->vcpu_id);
 			*sptep = newspte;
 		} else
@@ -417,16 +469,34 @@ int deactivateAllPages(struct kvm_vcpu *vcpu) {
 	int i;
 	for (i = 0; i < KVM_MAX_SPLIT_PAGES; i++) {
 		gva_t gva = spages->pages[i].gva;
+		gpa_t gpa = spages->pages[i].gpa;
 		if (gva) {
-			if (split_tlb_freepage(vcpu,spages->pages[i].gva)==0) {
-				printk(KERN_WARNING "deactivateAllPages: split_tlb_freepage failed for gva=%lx attempting to fix and free it based on saved gpa\n",gva);
-				split_tlb_restore_spte(vcpu,spages->pages[i].gpa >> PAGE_SHIFT);
+			if (split_tlb_freepage_by_gpa(vcpu,gpa)==0) {
+				printk(KERN_WARNING "deactivateAllPages: split_tlb_freepage failed for gva=%lx/gpa=%llx attempting to fix and free it based on saved gpa\n",gva,gpa);
+				split_tlb_restore_spte(vcpu,gpa >> PAGE_SHIFT);
+
 				kvm_split_tlb_freepage(spages->pages+i);
 			}
 		}
 	}
 	return 1;
 }
+
+int isPageSplit(struct kvm_vcpu *vcpu, gva_t addr ) {
+	u32 access = (kvm_x86_ops->get_cpl(vcpu) == 3) ? PFERR_USER_MASK : 0;
+	struct kvm_splitpage* page;
+	struct x86_exception exception;
+	gpa_t addr_gpa = vcpu->arch.walk_mmu->gva_to_gpa(vcpu, addr, access, &exception);
+	if (addr_gpa == UNMAPPED_GVA)
+		return 0;
+	printk(KERN_WARNING "isPageSplit: address translated gva=%lx to gpa=0x%llx\n",addr,addr_gpa);
+	page = split_tlb_findpage(vcpu->kvm,addr_gpa);
+	if (page != NULL)
+		return 1;
+	else
+		return 0;
+}
+
 
 /*
  * rax low word - opcode, upper 3 words will be used for secret code
@@ -438,25 +508,31 @@ int deactivateAllPages(struct kvm_vcpu *vcpu) {
  * 0x0002: Activate page.
  * 		rbx - guest virtual address for page
  *
- * 0x0003: Set code for page. Only usable after page is active
- * 		rbx - guest virtual address for page
- * 		rdx - guest virtual address for page code
+ * 0x0003: Write code for page. Only usable after page is active
+ * 		rcx - guest virtual address for data
+ * 		rdx - guest virtual address for destination
+ * 		r8 - number of bytes
  *
  * 0x0004: Deactivate page.
  * 		rbx - guest virtual address for page
  *
  * 0x0005: check if support is present
  *
- * 0x0005: deactivate all
+ * 0x0006: deactivate all
  *
  * 		return ax = 1 - success
  * 		ax = 0 - failure
  *
+ * 0x0007: page present
+ * 		rcx - guest virtual address for data
+ *
+ * 		return ax = 1 - present
+ * 		ax = 0 - not present
  */
 
 int split_tlb_vmcall_dispatch(struct kvm_vcpu *vcpu)
 {
-	unsigned long rip,cr3,rax,rbx,rdx,rcx;
+	unsigned long rip,cr3,rax,rbx,rdx,rcx,r8;
 	int result;
 
 	rip = kvm_rip_read(vcpu);
@@ -465,7 +541,8 @@ int split_tlb_vmcall_dispatch(struct kvm_vcpu *vcpu)
 	rbx = kvm_register_read(vcpu, VCPU_REGS_RBX);
 	rcx = kvm_register_read(vcpu, VCPU_REGS_RCX);
 	rdx = kvm_register_read(vcpu, VCPU_REGS_RDX);
-	printk(KERN_DEBUG "VMCALL: rip:0x%lx cr3:0x%lx rax:0x%lx rbx:0x%lx rcx:0x%lx rdx:0x%lx \n",rip,cr3,rax,rbx,rcx,rdx);
+	r8 = kvm_register_read(vcpu, VCPU_REGS_R8);
+	printk(KERN_DEBUG "VMCALL: rip:0x%lx cr3:0x%lx rax:0x%lx rbx:0x%lx rcx:0x%lx rdx:0x%lx r8:0x%lx\n",rip,cr3,rax,rbx,rcx,rdx,r8);
 
 	switch (rax&0xFFFF) {
 		case 0x0001:
@@ -475,8 +552,9 @@ int split_tlb_vmcall_dispatch(struct kvm_vcpu *vcpu)
 			result = split_tlb_activatepage(vcpu,rbx,cr3);
 		    break;
 		case 0x0003:
-			printk(KERN_WARNING "VMCALL: not implemented operation 0x%x \n",(unsigned short)(rax&0xFFFF));
-			result = 0;
+			//printk(KERN_WARNING "VMCALL: not implemented operation 0x%x \n",(unsigned short)(rax&0xFFFF));
+			result = split_tlb_copymem(vcpu,rcx,rdx,r8);
+			//result = 0;
 			break;
 		case 0x0004:
 			result = split_tlb_freepage(vcpu,rbx);
@@ -486,6 +564,9 @@ int split_tlb_vmcall_dispatch(struct kvm_vcpu *vcpu)
 			break;
 		case 0x0006:
 			result = deactivateAllPages(vcpu);
+			break;
+		case 0x0007:
+			result = isPageSplit(vcpu,rcx);
 			break;
 		default:
 			result = 0;
