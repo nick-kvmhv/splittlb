@@ -39,6 +39,9 @@
     <ClInclude Include="genericHook.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="PEHeaderParser.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="stdafx.cpp">
@@ -62,11 +65,11 @@
     <ClCompile Include="genericHook.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="PEHeaderParser.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <MASM Include="vmcalls.asm">
-      <Filter>Source Files</Filter>
-    </MASM>
     <MASM Include="testutils.asm">
       <Filter>Source Files</Filter>
     </MASM>
@@ -74,6 +77,9 @@
       <Filter>Source Files</Filter>
     </MASM>
     <MASM Include="genericHookTools.asm">
+      <Filter>Source Files</Filter>
+    </MASM>
+    <MASM Include="..\..\minhook.newapi\src\vmcalls.asm">
       <Filter>Source Files</Filter>
     </MASM>
   </ItemGroup>

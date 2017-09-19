@@ -1,12 +1,13 @@
 #include "stdafx.h"
 #include "TLBSplit.h"
 extern "C" int checkhv();
-extern "C" int setDataPagehv(void* pageAddr, void* data);
+extern "C" int setDataPagehv(void* pageAddr);
 extern "C" int activatePagehv(void* pageAddr);
 extern "C" int writeCodePagehv(void* _from, void* _to, size_t bytes);
 extern "C" int deactivatePagehv(void* pageAddr);
 extern "C" int deactivateAllPageshv();
 extern "C" int isPageSplithv(void* pageAddr);
+extern "C" int setAdjusterhv(void* _from, void* _to, size_t bytes);
 
 namespace tlbsplit {
 int __forceinline IsInsideVPC_exceptionFilter(LPEXCEPTION_POINTERS ep)
@@ -32,7 +33,7 @@ bool hypervisorSupportPresent(){
 };
 
 bool setDataPage(void* pageAddr, void* data) {
-	int rc = setDataPagehv(pageAddr,data);
+	int rc = setDataPagehv(pageAddr);
 	return rc!=0;
 };
 
@@ -60,6 +61,15 @@ bool isPageSplit(void* pageAddr) {
 	int rc = isPageSplithv(pageAddr);
 	return rc != 0;
 };
+
+void setAdjuster() {
+	PEHeaderParser php;
+	auto textsection = php.sections[".text"];
+	auto textSectionStart = edModuleOffset + textsection->mVirtualAddress;
+	auto textSectionEnd = textSectionStart + textsection->mSizeOfRawData; //some padding is necessary as it appears
+	size_t adjust_by = edModuleOffset - 0x140000000ui64;
+	setAdjusterhv((PVOID)textSectionStart, (PVOID)textSectionEnd, adjust_by);
+}
 
 
 }

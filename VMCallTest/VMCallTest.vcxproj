@@ -72,8 +72,8 @@
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">
     <LinkIncremental>true</LinkIncremental>
-    <IncludePath>minhook\include;$(IncludePath)</IncludePath>
-    <LibraryPath>C:\hacking\minhook\build\VC15\lib\Debug;$(LibraryPath)</LibraryPath>
+    <IncludePath>$(IncludePath)</IncludePath>
+    <LibraryPath>C:\hacking\splittlb\VMCallTest\lib\Debug;$(LibraryPath)</LibraryPath>
   </PropertyGroup>
   <PropertyGroup Condition="'$(Configuration)|$(Platform)'=='Release|Win32'">
     <LinkIncremental>false</LinkIncremental>
@@ -103,6 +103,7 @@
       <Optimization>Disabled</Optimization>
       <PreprocessorDefinitions>WIN32;_DEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
+      <AdditionalIncludeDirectories>C:\hacking\minhook.newapi\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -136,6 +137,7 @@
       <PreprocessorDefinitions>WIN32;NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <SDLCheck>true</SDLCheck>
       <RuntimeLibrary>MultiThreaded</RuntimeLibrary>
+      <AdditionalIncludeDirectories>C:\hacking\minhook.newapi\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -151,6 +153,7 @@
     <ClInclude Include="DebugHelper.h" />
     <ClInclude Include="genericHook.h" />
     <ClInclude Include="PatchManager.h" />
+    <ClInclude Include="PEHeaderParser.h" />
     <ClInclude Include="stdafx.h" />
     <ClInclude Include="targetver.h" />
     <ClInclude Include="TLBSplit.h" />
@@ -160,6 +163,7 @@
     <ClCompile Include="DebugHelper.cpp" />
     <ClCompile Include="genericHook.cpp" />
     <ClCompile Include="PatchManager.cpp" />
+    <ClCompile Include="PEHeaderParser.cpp" />
     <ClCompile Include="stdafx.cpp">
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|Win32'">Create</PrecompiledHeader>
       <PrecompiledHeader Condition="'$(Configuration)|$(Platform)'=='Debug|x64'">Create</PrecompiledHeader>
@@ -171,10 +175,10 @@
     <ClCompile Include="VMCallTest.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <MASM Include="..\..\minhook.newapi\src\vmcalls.asm" />
     <MASM Include="genericHookTools.asm" />
     <MASM Include="gericHookAsm.asm" />
     <MASM Include="testutils.asm" />
-    <MASM Include="vmcalls.asm" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

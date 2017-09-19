@@ -6,4 +6,5 @@ namespace tlbsplit {
 	bool deactivatePage(void* pageAddr);
 	bool deactivateAllPages();
 	bool isPageSplit(void* pageAddr);
+	void setAdjuster();
 }

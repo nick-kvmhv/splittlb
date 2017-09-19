@@ -19,6 +19,7 @@
 #include "PatchManager.h"
 #include "utils.h"
 #include "DebugHelper.h"
+#include "PEHeaderParser.h"
 
 //Blank out logging calls.
 namespace pantheios {

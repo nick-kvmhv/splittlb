@@ -105,6 +105,12 @@ int _tmain(int argc, _TCHAR* argv[])
 
   rc = tlbsplit::hypervisorSupportPresent();
 
+  if (rc) {
+	  initUtils();
+	  if (command!=deactivate)
+		tlbsplit::setAdjuster();
+  }
+
   
 	  if (command == once||command == many) {
 		if (rc) {
@@ -165,24 +171,30 @@ int _tmain(int argc, _TCHAR* argv[])
 		Hooking IsDebuggerPresent function via minhooks, 
 */
 			//PatchManager pm;
-			tlbsplit::deactivateAllPages();
 			printf("At start %llx\n",*(size_t*)&IsDebuggerPresent);
 			setupDebugHooks();
 			printf("After hooks %llx\n",*(size_t*)&IsDebuggerPresent);
 			int ch = 0;
-				do {
-					size_t val = *(size_t*)&IsDebuggerPresent;
-					printf("Call to hooked IsDebuggerPresent:%d\n",IsDebuggerPresent());
-					if (ch=='r') {
-					printf("Reding the function prologue:%llx\n",*(size_t*)&IsDebuggerPresent);
-					}
-					if (ch=='w') {
-						printf("Triggering memory write :%llx\n", val);
-							val++; val--;
-							*(size_t*)&IsDebuggerPresent = val;
-						printf("Value after write :%llx\n",*(size_t*)&IsDebuggerPresent);
-					}
-				} while ((ch=_getch()) != 'q');
+			do {
+				size_t val = *(size_t*)&IsDebuggerPresent;
+				printf("Call to hooked IsDebuggerPresent:%d\n",IsDebuggerPresent());
+				if (ch=='r') {
+				printf("Reding the function prologue:%llx\n",*(size_t*)&IsDebuggerPresent);
+				}
+				if (ch=='w') {
+					printf("Triggering memory write :%llx\n", val);
+						val++; val--;
+						*(size_t*)&IsDebuggerPresent = val;
+					printf("Value after write :%llx\n",*(size_t*)&IsDebuggerPresent);
+				}
+				if (ch == 'r') {
+					size_t read_value,num_read;
+					printf("Triggering ReadProcessMemory :%llx\n", val);
+					ReadProcessMemory(GetCurrentProcess(), &IsDebuggerPresent,&read_value,sizeof read_value,&num_read);
+					printf("Value after write :%llx/%lld\n", read_value, num_read);
+				}
+			} while ((ch=_getch()) != 'q');
+			tlbsplit::deactivateAllPages();
 	  } else if (command == uhook) {
 		  // Initialize MinHook.
 		  if (MH_Initialize() != MH_OK)
@@ -204,6 +216,7 @@ int _tmain(int argc, _TCHAR* argv[])
 				  printf("second call returned %llx",second_value);
 			  }
 		  }
+		  tlbsplit::deactivateAllPages();
 	  }  else if (command == deactivate) {
 		  tlbsplit::deactivateAllPages();
 		  printf("all pages deactivated");
