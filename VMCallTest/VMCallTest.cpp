@@ -16,9 +16,11 @@
 #endif
 
 extern "C" size_t getrip();
+extern "C" size_t getrsp();
 extern "C" size_t invalidopcode();
+extern "C" size_t callProcDumpHV();
 
-enum enum_commands {once,many,codendata,hook,write,uhook, deactivate};
+enum enum_commands {once,many,codendata,hook,write,uhook, deactivate, procdump};
 
 void __stdcall printit(int jmpCounter, void* address) {
 		printf("Iteration: %d value: %x\n",jmpCounter,*(DWORD*)address);
@@ -59,6 +61,8 @@ int _tmain(int argc, _TCHAR* argv[])
 		  command = uhook;
 	  else if (wcscmp(argv[1], L"/deactivate") == 0)
 		  command = deactivate;
+	  else if (wcscmp(argv[1], L"/procdump") == 0)
+		  command = procdump;
 	  else {
 		  printf("Invalid command: %S\n", argv[1]);
 		  return 1;
@@ -107,7 +111,7 @@ int _tmain(int argc, _TCHAR* argv[])
 
   if (rc) {
 	  initUtils();
-	  if (command!=deactivate)
+	  if (command!=deactivate && command !=procdump)
 		tlbsplit::setAdjuster();
   }
 
@@ -173,14 +177,14 @@ int _tmain(int argc, _TCHAR* argv[])
 			//PatchManager pm;
 			printf("At start %llx\n",*(size_t*)&IsDebuggerPresent);
 			setupDebugHooks();
-			printf("After hooks %llx\n",*(size_t*)&IsDebuggerPresent);
+			printf("After hooks %llx rsp:%llx\n",*(size_t*)&IsDebuggerPresent,getrsp());
 			int ch = 0;
 			do {
 				size_t val = *(size_t*)&IsDebuggerPresent;
 				printf("Call to hooked IsDebuggerPresent:%d\n",IsDebuggerPresent());
-				if (ch=='r') {
+				/*if (ch=='r') {
 				printf("Reding the function prologue:%llx\n",*(size_t*)&IsDebuggerPresent);
-				}
+				}*/
 				if (ch=='w') {
 					printf("Triggering memory write :%llx\n", val);
 						val++; val--;
@@ -191,7 +195,7 @@ int _tmain(int argc, _TCHAR* argv[])
 					size_t read_value,num_read;
 					printf("Triggering ReadProcessMemory :%llx\n", val);
 					ReadProcessMemory(GetCurrentProcess(), &IsDebuggerPresent,&read_value,sizeof read_value,&num_read);
-					printf("Value after write :%llx/%lld\n", read_value, num_read);
+					printf("Value from RPM :%llx/%lld\n", read_value, num_read);
 				}
 			} while ((ch=_getch()) != 'q');
 			tlbsplit::deactivateAllPages();
@@ -220,6 +224,10 @@ int _tmain(int argc, _TCHAR* argv[])
 	  }  else if (command == deactivate) {
 		  tlbsplit::deactivateAllPages();
 		  printf("all pages deactivated");
+	  }
+	  else if (command == procdump) {
+		  callProcDumpHV();
+		  printf("Proc dump VM call made");
 	  }
   return 0;
 }
